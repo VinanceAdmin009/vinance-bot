@@ -1,17 +1,20 @@
-import re
+import os
 import logging
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, InputFile
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     Updater, CommandHandler, CallbackContext,
     MessageHandler, Filters, ConversationHandler,
-    CallbackQueryHandler  # THIS WAS MISSING
+    CallbackQueryHandler
 )
-from config import *
+from config import *  # Import all settings
 from tendo.singleton import SingleInstance
 
 # ===== INITIALIZATION =====
-me = SingleInstance()
-logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
+me = SingleInstance()  # Prevent multiple instances
+logging.basicConfig(
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    level=logging.INFO
+)
 
 # ===== DATABASE =====
 class UserDB:
@@ -173,7 +176,11 @@ def handle_admin_message(update: Update, context: CallbackContext):
 
 # ===== MAIN =====
 def main():
-    updater = Updater(BOT_TOKEN)
+  if not BOT_TOKEN:
+        logging.error("❌ Missing BOT_TOKEN in config.py!")
+        return
+
+    updater = Updater(BOT_TOKEN, use_context=True)
     dp = updater.dispatcher
     
     # Registration flow
@@ -203,7 +210,8 @@ def main():
         pass_user_data=True
     ))
     
-    updater.start_polling()
+   updater.start_polling(drop_pending_updates=True)
+    logging.info("Bot started successfully")
     updater.idle()
 
 if __name__ == '__main__':
