@@ -1,2 +1,4 @@
 python-telegram-bot==13.7
 python-dotenv
+tendo
+emoji==2.1.0
