@@ -195,3 +195,6 @@ def main():
 
 if __name__ == '__main__':
     main()
+    def backup_db(update: Update, context: CallbackContext):
+    if update.message.chat.id in ADMIN_CHAT_IDS:
+        # Export db.active/db.pending to CSV
