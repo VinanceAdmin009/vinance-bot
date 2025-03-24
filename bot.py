@@ -6,11 +6,11 @@ from telegram.ext import (
     MessageHandler, Filters, ConversationHandler,
     CallbackQueryHandler
 )
-from config import *  # Import all settings
+from config import *
 from tendo.singleton import SingleInstance
 
 # ===== INITIALIZATION =====
-me = SingleInstance()  # Prevent multiple instances
+me = SingleInstance()
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     level=logging.INFO
@@ -71,6 +71,7 @@ def show_admin_panel(update: Update):
 
 def start_registration(update: Update, context: CallbackContext):
     query = update.callback_query
+    query.answer()
     query.edit_message_text("📝 Please enter your Vinance username:")
     return GET_USERNAME
 
@@ -122,7 +123,6 @@ def approve_user(update: Update, context: CallbackContext):
     except:
         update.message.reply_text("Usage: /approve_USERID")
 
-# ===== ADMIN MESSAGING =====
 def start_broadcast(update: Update, context: CallbackContext):
     if update.message.chat.id not in ADMIN_CHAT_IDS:
         return
@@ -174,16 +174,19 @@ def handle_admin_message(update: Update, context: CallbackContext):
         update.message.reply_text(f"📢 Broadcast sent to {sent}/{len(db.active)} users")
         context.user_data.pop('broadcast_mode')
 
-# ===== MAIN =====
+def error_handler(update: Update, context: CallbackContext):
+    logging.error(f"Error: {context.error}")
+
 def main():
-  if not BOT_TOKEN:
+    if not BOT_TOKEN:
         logging.error("❌ Missing BOT_TOKEN in config.py!")
         return
 
     updater = Updater(BOT_TOKEN, use_context=True)
     dp = updater.dispatcher
     
-    # Registration flow
+    dp.add_error_handler(error_handler)
+    
     conv_handler = ConversationHandler(
         entry_points=[CallbackQueryHandler(start_registration, pattern='^activate$')],
         states={
@@ -193,25 +196,20 @@ def main():
         fallbacks=[]
     )
     
-    # User commands
     dp.add_handler(CommandHandler("start", start))
     dp.add_handler(conv_handler)
-    
-    # Admin commands
     dp.add_handler(CommandHandler("admin", show_admin_panel))
     dp.add_handler(CommandHandler("approve_", approve_user))
     dp.add_handler(CommandHandler("broadcast", start_broadcast))
     dp.add_handler(CommandHandler("message", start_user_message))
-    
-    # Message handlers
     dp.add_handler(MessageHandler(
         Filters.text | Filters.photo, 
         handle_admin_message,
         pass_user_data=True
     ))
     
-   updater.start_polling(drop_pending_updates=True)
-    logging.info("Bot started successfully")
+    updater.start_polling(drop_pending_updates=True)
+    logging.info("🚀 Bot started successfully")
     updater.idle()
 
 if __name__ == '__main__':
