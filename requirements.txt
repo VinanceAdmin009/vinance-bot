@@ -1,4 +1,4 @@
-python-telegram-bot==13.7
-tendo==0.3.0  # Updated to available version
+python-telegram-bot==20.3
+tendo==0.3.0
 emoji==2.1.0
-requests==2.31.0
+python-dotenv==1.0.0  # For local .env file support
