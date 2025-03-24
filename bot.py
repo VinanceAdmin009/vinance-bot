@@ -7,10 +7,9 @@ from telegram.ext import (
 )
 from config import *
 from tendo.singleton import SingleInstance
-me = SingleInstance()  # Changed from singleton.SingleInstance()
 
 # ===== INITIALIZATION =====
-singleton.SingleInstance()
+me = SingleInstance()  # This prevents multiple bot instances
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
 
 # ===== DATABASE =====
@@ -53,6 +52,18 @@ def start(update: Update, context: CallbackContext):
             ]),
             parse_mode="Markdown"
         )
+
+def show_admin_panel(update: Update):
+    stats = {
+        "active_users": len(db.active),
+        "pending_users": len(db.pending),
+        "banned_users": 0  # Add your banned users logic
+    }
+    update.message.reply_text(
+        ADMIN_DASHBOARD.format(**stats),
+        reply_markup=build_admin_menu(),
+        parse_mode="Markdown"
+    )
 
 def start_registration(update: Update, context: CallbackContext):
     update.callback_query.edit_message_text("📝 Please enter your Vinance username:")
@@ -196,4 +207,3 @@ def main():
 
 if __name__ == '__main__':
     main()
-   
