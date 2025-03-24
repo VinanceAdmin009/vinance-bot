@@ -3,13 +3,14 @@ import logging
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, InputFile
 from telegram.ext import (
     Updater, CommandHandler, CallbackContext,
-    MessageHandler, Filters, ConversationHandler
+    MessageHandler, Filters, ConversationHandler,
+    CallbackQueryHandler  # THIS WAS MISSING
 )
 from config import *
 from tendo.singleton import SingleInstance
 
 # ===== INITIALIZATION =====
-me = SingleInstance()  # This prevents multiple bot instances
+me = SingleInstance()
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
 
 # ===== DATABASE =====
@@ -57,7 +58,7 @@ def show_admin_panel(update: Update):
     stats = {
         "active_users": len(db.active),
         "pending_users": len(db.pending),
-        "banned_users": 0  # Add your banned users logic
+        "banned_users": 0
     }
     update.message.reply_text(
         ADMIN_DASHBOARD.format(**stats),
@@ -66,7 +67,8 @@ def show_admin_panel(update: Update):
     )
 
 def start_registration(update: Update, context: CallbackContext):
-    update.callback_query.edit_message_text("📝 Please enter your Vinance username:")
+    query = update.callback_query
+    query.edit_message_text("📝 Please enter your Vinance username:")
     return GET_USERNAME
 
 def get_username(update: Update, context: CallbackContext):
@@ -88,7 +90,6 @@ def get_email(update: Update, context: CallbackContext):
     }
     db.add_user(user_data)
     
-    # Notify all admins
     for admin_id in ADMIN_CHAT_IDS:
         context.bot.send_message(
             chat_id=admin_id,
