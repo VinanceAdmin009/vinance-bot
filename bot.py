@@ -6,7 +6,8 @@ from telegram.ext import (
     MessageHandler, Filters, ConversationHandler
 )
 from config import *
-from tendo import singleton
+from tendo.singleton import SingleInstance
+me = SingleInstance()  # Changed from singleton.SingleInstance()
 
 # ===== INITIALIZATION =====
 singleton.SingleInstance()
