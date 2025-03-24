@@ -103,6 +103,12 @@ Available actions:""",
         reply_markup=InlineKeyboardMarkup(keyboard),
         parse_mode="Markdown"
     )
+    # Add to admin commands
+def backup_db(update: Update, context: CallbackContext):
+    context.bot.send_document(
+        chat_id=ADMIN_ID,
+        document=open('user_data.db', 'rb')
+    )
 
 # ===== MAIN =====
 def main():
@@ -121,3 +127,4 @@ def main():
 
 if __name__ == '__main__':
     main()
+    updater.idle()
