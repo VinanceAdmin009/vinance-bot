@@ -4,8 +4,9 @@ import atexit
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     Updater, CommandHandler, CallbackContext,
-    MessageHandler, Filters, ConversationHandler,
-    CallbackQueryHandler
+    MessageHandler, ConversationHandler,
+    CallbackQueryHandler,
+    filters
 )
 from config import *
 from tendo.singleton import SingleInstance
@@ -240,8 +241,8 @@ def main():
         conv_handler = ConversationHandler(
             entry_points=[CallbackQueryHandler(start_registration, pattern='^activate$')],
             states={
-                GET_USERNAME: [MessageHandler(Filters.text & ~Filters.command, get_username)],
-                GET_EMAIL: [MessageHandler(Filters.text & ~Filters.command, get_email)]
+                GET_USERNAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_username)],
+                GET_EMAIL: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_email)]
             },
             fallbacks=[]
         )
@@ -253,7 +254,7 @@ def main():
         dp.add_handler(CommandHandler("broadcast", start_broadcast))
         dp.add_handler(CommandHandler("message", start_user_message))
         dp.add_handler(MessageHandler(
-            Filters.text | Filters.photo, 
+            filters.TEXT | filters.PHOTO,
             handle_admin_message,
             pass_user_data=True
         ))
