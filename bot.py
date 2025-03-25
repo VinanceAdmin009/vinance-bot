@@ -124,7 +124,16 @@ async def show_admin_panel(update: Update, context: CallbackContext):
 async def start_registration(update: Update, context: CallbackContext):
     query = update.callback_query
     await query.answer()
-    await query.edit_message_text("📝 Please enter your Vinance username:")
+    # Store the original message ID for later editing
+    context.user_data['original_message_id'] = query.message.message_id
+    context.user_data['original_chat_id'] = query.message.chat.id
+    
+    # Edit the original message to show the prompt
+    await context.bot.edit_message_text(
+        chat_id=query.message.chat.id,
+        message_id=query.message.message_id,
+        text="📝 Please enter your Vinance username:"
+    )
     return GET_USERNAME
 
 async def get_username(update: Update, context: CallbackContext):
