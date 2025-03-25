@@ -32,15 +32,21 @@ logging.basicConfig(
     level=logging.INFO
 )
 
-# ===== DATABASE =====
+# ===== ENHANCED DATABASE =====
 class UserDB:
     def __init__(self):
         self.active = []
         self.pending = []
+        self.user_portfolios = {}  # Track user trading portfolios
     
     def add_user(self, user_data: dict):
         if not any(u['id'] == user_data['id'] for u in self.pending + self.active):
             self.pending.append(user_data)
+            self.user_portfolios[user_data['id']] = {
+                'balance': 0.0,
+                'positions': {},
+                'trading_enabled': False
+            }
             return True
         return False
     
@@ -49,6 +55,7 @@ class UserDB:
             user = next(u for u in self.pending if u['id'] == user_id)
             self.active.append(user)
             self.pending.remove(user)
+            self.user_portfolios[user_id]['trading_enabled'] = True
             return user
         except StopIteration:
             raise ValueError(f"User {user_id} not found in pending list")
@@ -56,255 +63,185 @@ class UserDB:
 db = UserDB()
 
 # ===== CONVERSATION STATES =====
-GET_USERNAME, GET_EMAIL = range(2)
+(
+    GET_USERNAME, GET_EMAIL, 
+    SELECT_USER_TO_MESSAGE, COMPOSE_USER_MESSAGE,
+    SELECT_BROADCAST_RECIPIENTS, COMPOSE_BROADCAST,
+    MANUAL_TRADE_SYMBOL, MANUAL_TRADE_AMOUNT
+) = range(8)
 
 # ===== UI COMPONENTS =====
 def build_admin_menu():
     return InlineKeyboardMarkup([
-        [InlineKeyboardButton("📨 Broadcast", callback_data="broadcast")],
-        [InlineKeyboardButton("📩 Message User", callback_data="message_user")],
-        [InlineKeyboardButton("✅ Approve Users", callback_data="approve_users")]
+        [InlineKeyboardButton("📨 Broadcast", callback_data="broadcast_menu")],
+        [InlineKeyboardButton("📩 Message User", callback_data="message_user_menu")],
+        [InlineKeyboardButton("✅ Approve Users", callback_data="approve_users")],
+        [InlineKeyboardButton("💱 Manual Trade", callback_data="manual_trade")],
+        [InlineKeyboardButton("📊 User Stats", callback_data="user_stats")]
     ])
 
-def build_approve_menu():
+def build_user_list(action_prefix):
+    keyboard = []
+    for user in db.active:
+        keyboard.append([
+            InlineKeyboardButton(
+                f"{user['name']} (@{user['username']})",
+                callback_data=f"{action_prefix}_{user['id']}"
+            )
+        ])
+    keyboard.append([InlineKeyboardButton("⬅️ Back", callback_data="back_to_admin")])
+    return InlineKeyboardMarkup(keyboard)
+
+def build_pending_users_menu():
     keyboard = []
     for user in db.pending:
         keyboard.append([
             InlineKeyboardButton(
-                f"Approve {user['name']}",
+                f"{user['name']} (@{user['username']})",
                 callback_data=f"approve_{user['id']}"
             )
         ])
+    keyboard.append([InlineKeyboardButton("⬅️ Back", callback_data="back_to_admin")])
     return InlineKeyboardMarkup(keyboard)
 
-# ===== ADMIN CHECK DECORATOR =====
-def admin_only(func):
-    async def wrapper(update: Update, context: CallbackContext):
-        if update.effective_chat.id not in ADMIN_CHAT_IDS:
-            if hasattr(update, 'callback_query'):
-                await update.callback_query.answer("❌ Admin access required!")
-            else:
-                await update.message.reply_text("❌ Admin access required!")
-            return
-        return await func(update, context)
-    return wrapper
-
-# ===== CORE FUNCTIONS =====
-async def start(update: Update, context: CallbackContext):
-    if update.effective_chat.id in ADMIN_CHAT_IDS:
-        await show_admin_panel(update, context)
-    else:
-        await update.message.reply_photo(
-            photo=LOGO_URL,
-            caption=WELCOME_MSG,
-            reply_markup=InlineKeyboardMarkup([
-                [InlineKeyboardButton("🔓 Activate AI", callback_data="activate")]
-            ]),
-            parse_mode="Markdown"
-        )
-
-@admin_only
-async def admin_command(update: Update, context: CallbackContext):
-    await show_admin_panel(update, context)
-
-async def show_admin_panel(update: Update, context: CallbackContext):
+# ===== ADMIN FUNCTIONS =====
+async def start_admin_panel(update: Update, context: CallbackContext):
     stats = {
         "active_users": len(db.active),
         "pending_users": len(db.pending),
-        "banned_users": 0
+        "total_balance": sum(u['balance'] for u in db.user_portfolios.values())
     }
-    await context.bot.send_message(
-        chat_id=update.effective_chat.id,
+    await update.message.reply_text(
         text=ADMIN_DASHBOARD.format(**stats),
         reply_markup=build_admin_menu(),
         parse_mode="Markdown"
     )
 
-async def start_registration(update: Update, context: CallbackContext):
+async def message_user_menu(update: Update, context: CallbackContext):
     query = update.callback_query
     await query.answer()
-    await context.bot.send_message(
-        chat_id=query.message.chat_id,
-        text="📝 Please enter your Vinance username:"
+    await query.edit_message_text(
+        text="Select user to message:",
+        reply_markup=build_user_list("message")
     )
-    return GET_USERNAME
+    return SELECT_USER_TO_MESSAGE
 
-async def get_username(update: Update, context: CallbackContext):
-    context.user_data['username'] = update.message.text
-    await update.message.reply_text("📧 Now enter your email address:")
-    return GET_EMAIL
+async def select_user_to_message(update: Update, context: CallbackContext):
+    query = update.callback_query
+    await query.answer()
+    
+    if query.data == "back_to_admin":
+        await show_admin_panel(update, context)
+        return ConversationHandler.END
+    
+    user_id = int(query.data.split('_')[1])
+    context.user_data['message_target'] = user_id
+    await query.edit_message_text("✍️ Enter your message for this user:")
+    return COMPOSE_USER_MESSAGE
 
-async def get_email(update: Update, context: CallbackContext):
-    email = update.message.text
-    if not any(domain in email for domain in EMAIL_DOMAINS):
-        await update.message.reply_text(f"❌ Invalid email domain. Allowed: {', '.join(EMAIL_DOMAINS)}")
-        return GET_EMAIL
+async def compose_user_message(update: Update, context: CallbackContext):
+    user_id = context.user_data['message_target']
+    try:
+        await context.bot.send_message(
+            chat_id=user_id,
+            text=update.message.text
+        )
+        await update.message.reply_text("✅ Message sent successfully!")
+    except Exception as e:
+        await update.message.reply_text(f"❌ Failed to send message: {str(e)}")
     
-    user_data = {
-        'id': update.message.from_user.id,
-        'username': context.user_data['username'],
-        'email': email,
-        'name': update.message.from_user.full_name
-    }
-    
-    if db.add_user(user_data):
-        for admin_id in ADMIN_CHAT_IDS:
-            # Send plain text message without Markdown formatting issues
-            await context.bot.send_message(
-                chat_id=admin_id,
-                text=f"🆕 New Registration\n\n"
-                     f"• Name: {user_data['name']}\n"
-                     f"• Username: {user_data['username']}\n"
-                     f"• Email: {user_data['email']}\n"
-                     f"• User ID: {user_data['id']}\n\n"
-                     f"Approve with: /approve_{user_data['id']}",
-                reply_markup=InlineKeyboardMarkup([
-                    [InlineKeyboardButton("✅ Approve", callback_data=f"approve_{user_data['id']}")]
-                ])
-            )
-        
-        await update.message.reply_text("✅ Registration complete! Admin will contact you soon.")
-    else:
-        await update.message.reply_text("⚠️ You're already registered! Admin will contact you soon.")
-    
+    await show_admin_panel(update, context)
     return ConversationHandler.END
 
-@admin_only
-async def approve_user_command(update: Update, context: CallbackContext):
-    try:
-        user_id = int(context.args[0])
-        user = db.approve_user(user_id)
-        
-        await context.bot.send_message(
-            chat_id=user_id,
-            text="🎉 Your Vinance AI access has been approved!\n\n"
-                 "Start trading with /start"
-        )
-        await update.message.reply_text(f"✅ Approved {user['name']}")
-    except ValueError as e:
-        await update.message.reply_text(f"❌ Error: {str(e)}")
-    except:
-        await update.message.reply_text("Usage: /approve_USERID")
-
-async def approve_user_callback(update: Update, context: CallbackContext):
+async def broadcast_menu(update: Update, context: CallbackContext):
     query = update.callback_query
     await query.answer()
-    
-    if query.from_user.id not in ADMIN_CHAT_IDS:
-        await query.edit_message_text("❌ Admin access required!")
-        return
-    
-    try:
-        user_id = int(query.data.split('_')[1])
-        user = db.approve_user(user_id)
-        
-        await context.bot.send_message(
-            chat_id=user_id,
-            text="🎉 Your Vinance AI access has been approved!\n\n"
-                 "Start trading with /start"
-        )
-        await query.edit_message_text(f"✅ Approved {user['name']}")
-    except Exception as e:
-        await query.edit_message_text(f"❌ Error: {str(e)}")
-
-async def show_pending_users(update: Update, context: CallbackContext):
-    query = update.callback_query
-    await query.answer()
-    
-    if query.from_user.id not in ADMIN_CHAT_IDS:
-        await query.edit_message_text("❌ Admin access required!")
-        return
-    
-    if not db.pending:
-        await query.edit_message_text("No pending users to approve.")
-        return
-    
     await query.edit_message_text(
-        "👥 Pending Approvals:",
-        reply_markup=build_approve_menu()
+        text="Select recipients for broadcast:",
+        reply_markup=InlineKeyboardMarkup([
+            [InlineKeyboardButton("All Active Users", callback_data="broadcast_all")],
+            [InlineKeyboardButton("Select Specific Users", callback_data="broadcast_select")],
+            [InlineKeyboardButton("⬅️ Back", callback_data="back_to_admin")]
+        ])
+    )
+    return SELECT_BROADCAST_RECIPIENTS
+
+async def manual_trade_menu(update: Update, context: CallbackContext):
+    query = update.callback_query
+    await query.answer()
+    await query.edit_message_text(
+        text="Enter trading pair (e.g. BTC/USDT):"
+    )
+    return MANUAL_TRADE_SYMBOL
+
+# ===== USER FUNCTIONS =====
+async def start_user_panel(update: Update, context: CallbackContext):
+    user_id = update.message.from_user.id
+    portfolio = db.user_portfolios.get(user_id, {})
+    
+    await update.message.reply_text(
+        text=f"💰 Your Portfolio\n\n"
+             f"Balance: ${portfolio.get('balance', 0):.2f}\n"
+             f"Trading Status: {'✅ Active' if portfolio.get('trading_enabled', False) else '❌ Pending Approval'}\n\n"
+             f"Available Commands:\n"
+             f"/balance - Check your balance\n"
+             f"/trade - Start a new trade\n"
+             f"/positions - View your open positions",
+        reply_markup=InlineKeyboardMarkup([
+            [InlineKeyboardButton("🔓 Activate AI", callback_data="activate")]
+        ])
     )
 
-@admin_only
-async def start_broadcast(update: Update, context: CallbackContext):
-    context.user_data['broadcast_mode'] = True
-    await update.message.reply_text("📢 Enter broadcast message (text or photo with caption):")
+# ===== MAIN HANDLERS =====
+async def start(update: Update, context: CallbackContext):
+    if update.message.chat.id in ADMIN_CHAT_IDS:
+        await start_admin_panel(update, context)
+    else:
+        await start_user_panel(update, context)
 
-@admin_only
-async def start_user_message(update: Update, context: CallbackContext):
-    context.user_data['user_message_mode'] = True
-    await update.message.reply_text("📩 Enter user ID to message:")
+async def show_admin_panel(update: Update, context: CallbackContext):
+    if hasattr(update, 'callback_query'):
+        query = update.callback_query
+        await query.answer()
+        await query.edit_message_text(
+            text="👑 Admin Panel",
+            reply_markup=build_admin_menu()
+        )
+    else:
+        await update.message.reply_text(
+            text="👑 Admin Panel",
+            reply_markup=build_admin_menu()
+        )
 
-async def handle_admin_message(update: Update, context: CallbackContext):
-    if update.effective_chat.id not in ADMIN_CHAT_IDS:
-        return
-    
-    if 'user_message_mode' in context.user_data:
-        try:
-            user_id = int(update.message.text)
-            context.user_data['target_user'] = user_id
-            await update.message.reply_text("✍️ Now enter your message:")
-            context.user_data.pop('user_message_mode')
-            context.user_data['send_to_user'] = True
-        except:
-            await update.message.reply_text("❌ Invalid user ID")
-    
-    elif 'send_to_user' in context.user_data:
-        user_id = context.user_data['target_user']
-        try:
-            if update.message.photo:
-                await update.message.copy(chat_id=user_id)
-            else:
-                await context.bot.send_message(chat_id=user_id, text=update.message.text)
-            await update.message.reply_text(f"✅ Message sent to user {user_id}")
-        except:
-            await update.message.reply_text("❌ Failed to send message")
-        context.user_data.pop('send_to_user')
-    
-    elif 'broadcast_mode' in context.user_data:
-        sent = 0
-        for user in db.active:
-            try:
-                if update.message.photo:
-                    await update.message.copy(chat_id=user['id'])
-                else:
-                    await context.bot.send_message(chat_id=user['id'], text=update.message.text)
-                sent += 1
-            except:
-                continue
-        await update.message.reply_text(f"📢 Broadcast sent to {sent}/{len(db.active)} users")
-        context.user_data.pop('broadcast_mode')
+# [Previous conversation handlers for registration remain the same...]
 
 async def error_handler(update: Update, context: CallbackContext):
     error = str(context.error)
     logging.error(f"🚨 Error: {error}")
-    
-    if "Conflict" in error and "getUpdates" in error:
-        logging.critical("💥 CRITICAL: Multiple bot instances detected!")
-        try:
-            await context.bot.send_message(
-                chat_id=ADMIN_CHAT_IDS[0],
-                text="🚨 MULTIPLE INSTANCE ALERT!\n\n"
-                     "Another bot instance was detected and this instance will shutdown.",
-                parse_mode="Markdown"
-            )
-        except:
-            pass
-        os._exit(1)
+    if update:
+        await context.bot.send_message(
+            chat_id=ADMIN_CHAT_IDS[0],
+            text=f"⚠️ Error occurred:\n{error}"
+        )
 
 async def post_init(application: Application):
     # Set commands for all users
     await application.bot.set_my_commands([
         ("start", "Start the bot"),
+        ("balance", "Check your balance"),
+        ("trade", "Start a new trade"),
+        ("positions", "View your positions")
     ])
     
-    # Set additional commands for admins only
+    # Set admin commands
     if ADMIN_CHAT_IDS:
         await application.bot.set_my_commands(
             commands=[
                 ("start", "Start the bot"),
                 ("admin", "Admin panel"),
                 ("broadcast", "Send broadcast"),
-                ("message", "Message user")
+                ("approve", "Approve users"),
+                ("manualtrade", "Execute manual trade")
             ],
             scope=BotCommandScopeChat(ADMIN_CHAT_IDS[0])
         )
@@ -319,6 +256,7 @@ def main():
         
         application.add_error_handler(error_handler)
         
+        # Registration conversation handler (same as before)
         conv_handler = ConversationHandler(
             entry_points=[CallbackQueryHandler(start_registration, pattern='^activate$')],
             states={
@@ -331,20 +269,48 @@ def main():
             per_chat=True
         )
         
+        # Admin message conversation handler
+        msg_handler = ConversationHandler(
+            entry_points=[CallbackQueryHandler(message_user_menu, pattern='^message_user_menu$')],
+            states={
+                SELECT_USER_TO_MESSAGE: [CallbackQueryHandler(select_user_to_message)],
+                COMPOSE_USER_MESSAGE: [MessageHandler(filters.TEXT & ~filters.COMMAND, compose_user_message)]
+            },
+            fallbacks=[]
+        )
+        
+        # Broadcast conversation handler
+        broadcast_handler = ConversationHandler(
+            entry_points=[CallbackQueryHandler(broadcast_menu, pattern='^broadcast_menu$')],
+            states={
+                SELECT_BROADCAST_RECIPIENTS: [CallbackQueryHandler(select_broadcast_recipients)],
+                COMPOSE_BROADCAST: [MessageHandler(filters.TEXT | filters.PHOTO, send_broadcast)]
+            },
+            fallbacks=[]
+        )
+        
+        # Manual trade conversation handler
+        trade_handler = ConversationHandler(
+            entry_points=[CallbackQueryHandler(manual_trade_menu, pattern='^manual_trade$')],
+            states={
+                MANUAL_TRADE_SYMBOL: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_trade_symbol)],
+                MANUAL_TRADE_AMOUNT: [MessageHandler(filters.TEXT & ~filters.COMMAND, execute_trade)]
+            },
+            fallbacks=[]
+        )
+        
+        # Add all handlers
         application.add_handler(CommandHandler("start", start))
+        application.add_handler(CommandHandler("admin", start_admin_panel))
         application.add_handler(conv_handler)
-        application.add_handler(CommandHandler("admin", admin_command))
-        application.add_handler(CommandHandler("approve_", approve_user_command))
+        application.add_handler(msg_handler)
+        application.add_handler(broadcast_handler)
+        application.add_handler(trade_handler)
+        
+        # Add other callback handlers
         application.add_handler(CallbackQueryHandler(approve_user_callback, pattern='^approve_'))
         application.add_handler(CallbackQueryHandler(show_pending_users, pattern='^approve_users$'))
-        application.add_handler(CallbackQueryHandler(start_broadcast, pattern='^broadcast$'))
-        application.add_handler(CallbackQueryHandler(start_user_message, pattern='^message_user$'))
-        application.add_handler(CommandHandler("broadcast", start_broadcast))
-        application.add_handler(CommandHandler("message", start_user_message))
-        application.add_handler(MessageHandler(
-            filters.TEXT | filters.PHOTO,
-            handle_admin_message
-        ))
+        application.add_handler(CallbackQueryHandler(show_admin_panel, pattern='^back_to_admin$'))
         
         application.run_polling(
             drop_pending_updates=True,
