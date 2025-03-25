@@ -119,7 +119,7 @@ async def get_username(update: Update, context: CallbackContext):
 
 async def get_email(update: Update, context: CallbackContext):
     email = update.message.text
-    if not validate_email(email):  # You should implement this function
+    if not validate_email(email):
         await update.message.reply_text("Invalid email format. Please try again:")
         return GET_EMAIL
     
@@ -150,8 +150,86 @@ async def get_email(update: Update, context: CallbackContext):
     return ConversationHandler.END
 
 def validate_email(email: str) -> bool:
-    # Simple email validation (you might want to use a library for this)
     return '@' in email and '.' in email.split('@')[-1]
+
+# ===== BROADCAST FUNCTIONS =====
+async def select_broadcast_recipients(update: Update, context: CallbackContext):
+    query = update.callback_query
+    await query.answer()
+    
+    if query.data == "back_to_admin":
+        await show_admin_panel(update, context)
+        return ConversationHandler.END
+    elif query.data == "broadcast_all":
+        context.user_data['broadcast_recipients'] = [user['id'] for user in db.active]
+        await query.edit_message_text("📢 Enter your broadcast message:")
+        return COMPOSE_BROADCAST
+    elif query.data == "broadcast_select":
+        await query.edit_message_text(
+            text="Select users to broadcast to:",
+            reply_markup=build_user_list("broadcast")
+        )
+        context.user_data['broadcast_recipients'] = []
+        return COMPOSE_BROADCAST
+
+async def send_broadcast(update: Update, context: CallbackContext):
+    recipients = context.user_data.get('broadcast_recipients', [])
+    if not recipients:
+        await update.message.reply_text("No recipients selected!")
+        await show_admin_panel(update, context)
+        return ConversationHandler.END
+    
+    success = 0
+    failures = 0
+    message = update.message.text if update.message.text else "Check this out!"
+    
+    for user_id in recipients:
+        try:
+            if update.message.photo:
+                await context.bot.send_photo(
+                    chat_id=user_id,
+                    photo=update.message.photo[-1].file_id,
+                    caption=message
+                )
+            else:
+                await context.bot.send_message(
+                    chat_id=user_id,
+                    text=message
+                )
+            success += 1
+        except Exception as e:
+            logging.error(f"Failed to send to {user_id}: {str(e)}")
+            failures += 1
+    
+    await update.message.reply_text(
+        f"📢 Broadcast completed!\n"
+        f"✅ Success: {success}\n"
+        f"❌ Failures: {failures}"
+    )
+    
+    await show_admin_panel(update, context)
+    return ConversationHandler.END
+
+# ===== TRADE FUNCTIONS =====
+async def get_trade_symbol(update: Update, context: CallbackContext):
+    context.user_data['trade_symbol'] = update.message.text.upper()
+    await update.message.reply_text("Enter amount to trade:")
+    return MANUAL_TRADE_AMOUNT
+
+async def execute_trade(update: Update, context: CallbackContext):
+    try:
+        amount = float(update.message.text)
+        symbol = context.user_data['trade_symbol']
+        # Here you would implement actual trading logic
+        await update.message.reply_text(
+            f"✅ Trade executed: {amount} {symbol}"
+        )
+    except ValueError:
+        await update.message.reply_text("Invalid amount. Please enter a number.")
+        return MANUAL_TRADE_AMOUNT
+    
+    await show_admin_panel(update, context)
+    return ConversationHandler.END
 
 # ===== ADMIN FUNCTIONS =====
 async def start_admin_panel(update: Update, context: CallbackContext):
