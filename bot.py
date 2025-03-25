@@ -1,7 +1,7 @@
 import os
 import logging
 import atexit
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, BotCommandScopeChat
 from telegram.ext import (
     Application, CommandHandler, CallbackContext,
     MessageHandler, ConversationHandler,
@@ -81,7 +81,10 @@ def build_approve_menu():
 def admin_only(func):
     async def wrapper(update: Update, context: CallbackContext):
         if update.effective_chat.id not in ADMIN_CHAT_IDS:
-            await update.message.reply_text("❌ Admin access required!")
+            if hasattr(update, 'callback_query'):
+                await update.callback_query.answer("❌ Admin access required!")
+            else:
+                await update.message.reply_text("❌ Admin access required!")
             return
         return await func(update, context)
     return wrapper
@@ -292,19 +295,22 @@ async def error_handler(update: Update, context: CallbackContext):
         os._exit(1)
 
 async def post_init(application: Application):
+    # Set commands for all users
     await application.bot.set_my_commands([
         ("start", "Start the bot"),
     ])
-    # Add admin commands only for admin users
-    await application.bot.set_my_commands(
-        commands=[
-            ("start", "Start the bot"),
-            ("admin", "Admin panel"),
-            ("broadcast", "Send broadcast"),
-            ("message", "Message user")
-        ],
-        scope=telegram.BotCommandScopeChat(ADMIN_CHAT_IDS[0])
-    )
+    
+    # Set additional commands for admins only
+    if ADMIN_CHAT_IDS:
+        await application.bot.set_my_commands(
+            commands=[
+                ("start", "Start the bot"),
+                ("admin", "Admin panel"),
+                ("broadcast", "Send broadcast"),
+                ("message", "Message user")
+            ],
+            scope=BotCommandScopeChat(ADMIN_CHAT_IDS[0])
+        )
 
 def main():
     if not BOT_TOKEN:
@@ -323,7 +329,7 @@ def main():
                 GET_EMAIL: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_email)]
             },
             fallbacks=[],
-            per_message=False,
+            per_message=False,  # Set to False since we're using MessageHandler
             per_user=True,
             per_chat=True
         )
