@@ -77,9 +77,18 @@ def build_approve_menu():
         ])
     return InlineKeyboardMarkup(keyboard)
 
+# ===== ADMIN CHECK DECORATOR =====
+def admin_only(func):
+    async def wrapper(update: Update, context: CallbackContext):
+        if update.effective_chat.id not in ADMIN_CHAT_IDS:
+            await update.message.reply_text("❌ Admin access required!")
+            return
+        return await func(update, context)
+    return wrapper
+
 # ===== CORE FUNCTIONS =====
 async def start(update: Update, context: CallbackContext):
-    if update.message.chat.id in ADMIN_CHAT_IDS:
+    if update.effective_chat.id in ADMIN_CHAT_IDS:
         await show_admin_panel(update, context)
     else:
         await update.message.reply_photo(
@@ -91,13 +100,18 @@ async def start(update: Update, context: CallbackContext):
             parse_mode="Markdown"
         )
 
+@admin_only
+async def admin_command(update: Update, context: CallbackContext):
+    await show_admin_panel(update, context)
+
 async def show_admin_panel(update: Update, context: CallbackContext):
     stats = {
         "active_users": len(db.active),
         "pending_users": len(db.pending),
         "banned_users": 0
     }
-    await update.message.reply_photo(
+    await context.bot.send_photo(
+        chat_id=update.effective_chat.id,
         photo=LOGO_URL,
         caption=ADMIN_DASHBOARD.format(**stats),
         reply_markup=build_admin_menu(),
@@ -151,6 +165,7 @@ async def get_email(update: Update, context: CallbackContext):
     
     return ConversationHandler.END
 
+@admin_only
 async def approve_user_command(update: Update, context: CallbackContext):
     try:
         user_id = int(context.args[0])
@@ -173,6 +188,10 @@ async def approve_user_callback(update: Update, context: CallbackContext):
     query = update.callback_query
     await query.answer()
     
+    if query.from_user.id not in ADMIN_CHAT_IDS:
+        await query.edit_message_text("❌ Admin access required!")
+        return
+    
     user_id = int(query.data.split('_')[1])
     try:
         user = db.approve_user(user_id)
@@ -192,6 +211,10 @@ async def show_pending_users(update: Update, context: CallbackContext):
     query = update.callback_query
     await query.answer()
     
+    if query.from_user.id not in ADMIN_CHAT_IDS:
+        await query.edit_message_text("❌ Admin access required!")
+        return
+    
     if not db.pending:
         await query.edit_message_text("No pending users to approve.")
         return
@@ -201,21 +224,20 @@ async def show_pending_users(update: Update, context: CallbackContext):
         reply_markup=build_approve_menu()
     )
 
+@admin_only
 async def start_broadcast(update: Update, context: CallbackContext):
-    if update.message.chat.id not in ADMIN_CHAT_IDS:
-        return
-    
     context.user_data['broadcast_mode'] = True
     await update.message.reply_text("📢 Enter broadcast message (text or photo with caption):")
 
+@admin_only
 async def start_user_message(update: Update, context: CallbackContext):
-    if update.message.chat.id not in ADMIN_CHAT_IDS:
-        return
-    
     context.user_data['user_message_mode'] = True
     await update.message.reply_text("📩 Enter user ID to message:")
 
 async def handle_admin_message(update: Update, context: CallbackContext):
+    if update.effective_chat.id not in ADMIN_CHAT_IDS:
+        return
+    
     if 'user_message_mode' in context.user_data:
         try:
             user_id = int(update.message.text)
@@ -272,8 +294,17 @@ async def error_handler(update: Update, context: CallbackContext):
 async def post_init(application: Application):
     await application.bot.set_my_commands([
         ("start", "Start the bot"),
-        ("admin", "Admin panel")
     ])
+    # Add admin commands only for admin users
+    await application.bot.set_my_commands(
+        commands=[
+            ("start", "Start the bot"),
+            ("admin", "Admin panel"),
+            ("broadcast", "Send broadcast"),
+            ("message", "Message user")
+        ],
+        scope=telegram.BotCommandScopeChat(ADMIN_CHAT_IDS[0])
+    )
 
 def main():
     if not BOT_TOKEN:
@@ -299,10 +330,12 @@ def main():
         
         application.add_handler(CommandHandler("start", start))
         application.add_handler(conv_handler)
-        application.add_handler(CommandHandler("admin", show_admin_panel))
+        application.add_handler(CommandHandler("admin", admin_command))
         application.add_handler(CommandHandler("approve_", approve_user_command))
         application.add_handler(CallbackQueryHandler(approve_user_callback, pattern='^approve_'))
         application.add_handler(CallbackQueryHandler(show_pending_users, pattern='^approve_users$'))
+        application.add_handler(CallbackQueryHandler(start_broadcast, pattern='^broadcast$'))
+        application.add_handler(CallbackQueryHandler(start_user_message, pattern='^message_user$'))
         application.add_handler(CommandHandler("broadcast", start_broadcast))
         application.add_handler(CommandHandler("message", start_user_message))
         application.add_handler(MessageHandler(
