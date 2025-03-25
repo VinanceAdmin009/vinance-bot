@@ -8,6 +8,7 @@ from telegram.ext import (
     CallbackQueryHandler,
     filters
 )
+
 from config import *
 from tendo.singleton import SingleInstance
 
@@ -104,6 +105,54 @@ def build_pending_users_menu():
     keyboard.append([InlineKeyboardButton("⬅️ Back", callback_data="back_to_admin")])
     return InlineKeyboardMarkup(keyboard)
 
+# ===== REGISTRATION FUNCTIONS =====
+async def start_registration(update: Update, context: CallbackContext):
+    query = update.callback_query
+    await query.answer()
+    await query.edit_message_text("Please enter your full name:")
+    return GET_USERNAME
+
+async def get_username(update: Update, context: CallbackContext):
+    context.user_data['name'] = update.message.text
+    await update.message.reply_text("Great! Now please enter your email address:")
+    return GET_EMAIL
+
+async def get_email(update: Update, context: CallbackContext):
+    email = update.message.text
+    if not validate_email(email):  # You should implement this function
+        await update.message.reply_text("Invalid email format. Please try again:")
+        return GET_EMAIL
+    
+    user_data = {
+        'id': update.message.from_user.id,
+        'name': context.user_data['name'],
+        'username': update.message.from_user.username,
+        'email': email
+    }
+    
+    if db.add_user(user_data):
+        await update.message.reply_text(
+            "✅ Registration submitted for admin approval!\n"
+            "You'll be notified once your account is activated."
+        )
+        # Notify admin
+        for admin_id in ADMIN_CHAT_IDS:
+            await context.bot.send_message(
+                chat_id=admin_id,
+                text=f"🆕 New user registration:\n\n"
+                     f"Name: {user_data['name']}\n"
+                     f"Username: @{user_data['username']}\n"
+                     f"Email: {user_data['email']}"
+            )
+    else:
+        await update.message.reply_text("You're already registered!")
+    
+    return ConversationHandler.END
+
+def validate_email(email: str) -> bool:
+    # Simple email validation (you might want to use a library for this)
+    return '@' in email and '.' in email.split('@')[-1]
+
 # ===== ADMIN FUNCTIONS =====
 async def start_admin_panel(update: Update, context: CallbackContext):
     stats = {
@@ -174,6 +223,36 @@ async def manual_trade_menu(update: Update, context: CallbackContext):
     )
     return MANUAL_TRADE_SYMBOL
 
+async def show_pending_users(update: Update, context: CallbackContext):
+    query = update.callback_query
+    await query.answer()
+    if not db.pending:
+        await query.edit_message_text("No pending users to approve.")
+        return
+    
+    await query.edit_message_text(
+        text="Select user to approve:",
+        reply_markup=build_pending_users_menu()
+    )
+
+async def approve_user_callback(update: Update, context: CallbackContext):
+    query = update.callback_query
+    await query.answer()
+    
+    user_id = int(query.data.split('_')[1])
+    try:
+        user = db.approve_user(user_id)
+        await query.edit_message_text(f"✅ User @{user['username']} approved!")
+        # Notify the user
+        await context.bot.send_message(
+            chat_id=user_id,
+            text="🎉 Your account has been approved! You can now start trading."
+        )
+    except ValueError as e:
+        await query.edit_message_text(str(e))
+    
+    await show_admin_panel(update, context)
+
 # ===== USER FUNCTIONS =====
 async def start_user_panel(update: Update, context: CallbackContext):
     user_id = update.message.from_user.id
@@ -212,8 +291,6 @@ async def show_admin_panel(update: Update, context: CallbackContext):
             text="👑 Admin Panel",
             reply_markup=build_admin_menu()
         )
-
-# [Previous conversation handlers for registration remain the same...]
 
 async def error_handler(update: Update, context: CallbackContext):
     error = str(context.error)
@@ -256,7 +333,7 @@ def main():
         
         application.add_error_handler(error_handler)
         
-        # Registration conversation handler (same as before)
+        # Registration conversation handler
         conv_handler = ConversationHandler(
             entry_points=[CallbackQueryHandler(start_registration, pattern='^activate$')],
             states={
