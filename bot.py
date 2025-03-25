@@ -63,30 +63,43 @@ def build_admin_menu():
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("📨 Broadcast", callback_data="broadcast")],
         [InlineKeyboardButton("📩 Message User", callback_data="message_user")],
-        [InlineKeyboardButton("✅ Approve Users", callback_data="approve_list")]
+        [InlineKeyboardButton("✅ Approve Users", callback_data="approve_users")]
     ])
+
+def build_approve_menu():
+    keyboard = []
+    for user in db.pending:
+        keyboard.append([
+            InlineKeyboardButton(
+                f"Approve {user['name']} ({user['id']})",
+                callback_data=f"approve_{user['id']}"
+            )
+        ])
+    return InlineKeyboardMarkup(keyboard)
 
 # ===== CORE FUNCTIONS =====
 async def start(update: Update, context: CallbackContext):
     if update.message.chat.id in ADMIN_CHAT_IDS:
-        await show_admin_panel(update)
+        await show_admin_panel(update, context)
     else:
-        await update.message.reply_text(
-            WELCOME_MSG,
+        await update.message.reply_photo(
+            photo=LOGO_URL,
+            caption=WELCOME_MSG,
             reply_markup=InlineKeyboardMarkup([
                 [InlineKeyboardButton("🔓 Activate AI", callback_data="activate")]
             ]),
             parse_mode="Markdown"
         )
 
-async def show_admin_panel(update: Update):
+async def show_admin_panel(update: Update, context: CallbackContext):
     stats = {
         "active_users": len(db.active),
         "pending_users": len(db.pending),
         "banned_users": 0
     }
-    await update.message.reply_text(
-        ADMIN_DASHBOARD.format(**stats),
+    await update.message.reply_photo(
+        photo=LOGO_URL,
+        caption=ADMIN_DASHBOARD.format(**stats),
         reply_markup=build_admin_menu(),
         parse_mode="Markdown"
     )
@@ -117,14 +130,19 @@ async def get_email(update: Update, context: CallbackContext):
     
     if db.add_user(user_data):
         for admin_id in ADMIN_CHAT_IDS:
-            await context.bot.send_message(
+            await context.bot.send_photo(
                 chat_id=admin_id,
-                text=f"🆕 *New Registration*\n\n"
+                photo=LOGO_URL,
+                caption=f"🆕 *New Registration*\n\n"
                      f"• Name: {user_data['name']}\n"
-                     f"• Username: {user_data['username']}\n"
-                     f"• Email: {user_data['email']}\n\n"
+                     f"• Username: @{user_data['username']}\n"
+                     f"• Email: {user_data['email']}\n"
+                     f"• User ID: `{user_data['id']}`\n\n"
                      f"Approve with: /approve_{user_data['id']}",
-                parse_mode="Markdown"
+                parse_mode="Markdown",
+                reply_markup=InlineKeyboardMarkup([
+                    [InlineKeyboardButton("✅ Approve", callback_data=f"approve_{user_data['id']}")]
+                ])
             )
         
         await update.message.reply_text("✅ Registration complete! Admin will contact you soon.")
@@ -133,14 +151,15 @@ async def get_email(update: Update, context: CallbackContext):
     
     return ConversationHandler.END
 
-async def approve_user(update: Update, context: CallbackContext):
+async def approve_user_command(update: Update, context: CallbackContext):
     try:
         user_id = int(context.args[0])
         user = db.approve_user(user_id)
         
-        await context.bot.send_message(
+        await context.bot.send_photo(
             chat_id=user_id,
-            text="🎉 *Your Vinance AI access has been approved!*\n\n"
+            photo=LOGO_URL,
+            caption="🎉 *Your Vinance AI access has been approved!*\n\n"
                  "Start trading with /start",
             parse_mode="Markdown"
         )
@@ -149,6 +168,38 @@ async def approve_user(update: Update, context: CallbackContext):
         await update.message.reply_text(f"❌ Error: {str(e)}")
     except:
         await update.message.reply_text("Usage: /approve_USERID")
+
+async def approve_user_callback(update: Update, context: CallbackContext):
+    query = update.callback_query
+    await query.answer()
+    
+    user_id = int(query.data.split('_')[1])
+    try:
+        user = db.approve_user(user_id)
+        
+        await context.bot.send_photo(
+            chat_id=user_id,
+            photo=LOGO_URL,
+            caption="🎉 *Your Vinance AI access has been approved!*\n\n"
+                 "Start trading with /start",
+            parse_mode="Markdown"
+        )
+        await query.edit_message_text(f"✅ Approved {user['name']}")
+    except Exception as e:
+        await query.edit_message_text(f"❌ Error: {str(e)}")
+
+async def show_pending_users(update: Update, context: CallbackContext):
+    query = update.callback_query
+    await query.answer()
+    
+    if not db.pending:
+        await query.edit_message_text("No pending users to approve.")
+        return
+    
+    await query.edit_message_text(
+        "👥 Pending Approvals:",
+        reply_markup=build_approve_menu()
+    )
 
 async def start_broadcast(update: Update, context: CallbackContext):
     if update.message.chat.id not in ADMIN_CHAT_IDS:
@@ -224,8 +275,6 @@ async def post_init(application: Application):
         ("admin", "Admin panel")
     ])
 
-# [Previous code remains exactly the same until the ConversationHandler]
-
 def main():
     if not BOT_TOKEN:
         logging.error("❌ Missing BOT_TOKEN in config.py!")
@@ -243,17 +292,17 @@ def main():
                 GET_EMAIL: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_email)]
             },
             fallbacks=[],
-            per_message=False,  # Set to False when using MessageHandler
+            per_message=False,
             per_user=True,
             per_chat=True
         )
-
-        # [Rest of your code remains exactly the same]
         
         application.add_handler(CommandHandler("start", start))
         application.add_handler(conv_handler)
         application.add_handler(CommandHandler("admin", show_admin_panel))
-        application.add_handler(CommandHandler("approve_", approve_user))
+        application.add_handler(CommandHandler("approve_", approve_user_command))
+        application.add_handler(CallbackQueryHandler(approve_user_callback, pattern='^approve_'))
+        application.add_handler(CallbackQueryHandler(show_pending_users, pattern='^approve_users$'))
         application.add_handler(CommandHandler("broadcast", start_broadcast))
         application.add_handler(CommandHandler("message", start_user_message))
         application.add_handler(MessageHandler(
