@@ -224,6 +224,8 @@ async def post_init(application: Application):
         ("admin", "Admin panel")
     ])
 
+# [Previous code remains exactly the same until the ConversationHandler]
+
 def main():
     if not BOT_TOKEN:
         logging.error("❌ Missing BOT_TOKEN in config.py!")
@@ -241,10 +243,12 @@ def main():
                 GET_EMAIL: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_email)]
             },
             fallbacks=[],
-            per_message=True,
+            per_message=False,  # Set to False when using MessageHandler
             per_user=True,
             per_chat=True
         )
+
+        # [Rest of your code remains exactly the same]
         
         application.add_handler(CommandHandler("start", start))
         application.add_handler(conv_handler)
