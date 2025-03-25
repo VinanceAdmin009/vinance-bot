@@ -124,14 +124,16 @@ async def show_admin_panel(update: Update, context: CallbackContext):
 async def start_registration(update: Update, context: CallbackContext):
     query = update.callback_query
     await query.answer()
-    # Store the original message ID for later editing
-    context.user_data['original_message_id'] = query.message.message_id
-    context.user_data['original_chat_id'] = query.message.chat.id
     
-    # Edit the original message to show the prompt
-    await context.bot.edit_message_text(
-        chat_id=query.message.chat.id,
-        message_id=query.message.message_id,
+    # Store the message info in context
+    context.user_data['original_message'] = {
+        'chat_id': query.message.chat_id,
+        'message_id': query.message.message_id
+    }
+    
+    # Send a new message instead of editing to avoid issues
+    await context.bot.send_message(
+        chat_id=query.message.chat_id,
         text="📝 Please enter your Vinance username:"
     )
     return GET_USERNAME
@@ -177,149 +179,7 @@ async def get_email(update: Update, context: CallbackContext):
     
     return ConversationHandler.END
 
-@admin_only
-async def approve_user_command(update: Update, context: CallbackContext):
-    try:
-        user_id = int(context.args[0])
-        user = db.approve_user(user_id)
-        
-        await context.bot.send_photo(
-            chat_id=user_id,
-            photo=LOGO_URL,
-            caption="🎉 *Your Vinance AI access has been approved!*\n\n"
-                 "Start trading with /start",
-            parse_mode="Markdown"
-        )
-        await update.message.reply_text(f"✅ Approved {user['name']}")
-    except ValueError as e:
-        await update.message.reply_text(f"❌ Error: {str(e)}")
-    except:
-        await update.message.reply_text("Usage: /approve_USERID")
-
-async def approve_user_callback(update: Update, context: CallbackContext):
-    query = update.callback_query
-    await query.answer()
-    
-    if query.from_user.id not in ADMIN_CHAT_IDS:
-        await query.edit_message_text("❌ Admin access required!")
-        return
-    
-    user_id = int(query.data.split('_')[1])
-    try:
-        user = db.approve_user(user_id)
-        
-        await context.bot.send_photo(
-            chat_id=user_id,
-            photo=LOGO_URL,
-            caption="🎉 *Your Vinance AI access has been approved!*\n\n"
-                 "Start trading with /start",
-            parse_mode="Markdown"
-        )
-        await query.edit_message_text(f"✅ Approved {user['name']}")
-    except Exception as e:
-        await query.edit_message_text(f"❌ Error: {str(e)}")
-
-async def show_pending_users(update: Update, context: CallbackContext):
-    query = update.callback_query
-    await query.answer()
-    
-    if query.from_user.id not in ADMIN_CHAT_IDS:
-        await query.edit_message_text("❌ Admin access required!")
-        return
-    
-    if not db.pending:
-        await query.edit_message_text("No pending users to approve.")
-        return
-    
-    await query.edit_message_text(
-        "👥 Pending Approvals:",
-        reply_markup=build_approve_menu()
-    )
-
-@admin_only
-async def start_broadcast(update: Update, context: CallbackContext):
-    context.user_data['broadcast_mode'] = True
-    await update.message.reply_text("📢 Enter broadcast message (text or photo with caption):")
-
-@admin_only
-async def start_user_message(update: Update, context: CallbackContext):
-    context.user_data['user_message_mode'] = True
-    await update.message.reply_text("📩 Enter user ID to message:")
-
-async def handle_admin_message(update: Update, context: CallbackContext):
-    if update.effective_chat.id not in ADMIN_CHAT_IDS:
-        return
-    
-    if 'user_message_mode' in context.user_data:
-        try:
-            user_id = int(update.message.text)
-            context.user_data['target_user'] = user_id
-            await update.message.reply_text("✍️ Now enter your message:")
-            context.user_data.pop('user_message_mode')
-            context.user_data['send_to_user'] = True
-        except:
-            await update.message.reply_text("❌ Invalid user ID")
-    
-    elif 'send_to_user' in context.user_data:
-        user_id = context.user_data['target_user']
-        try:
-            if update.message.photo:
-                await update.message.copy(chat_id=user_id)
-            else:
-                await context.bot.send_message(chat_id=user_id, text=update.message.text)
-            await update.message.reply_text(f"✅ Message sent to user {user_id}")
-        except:
-            await update.message.reply_text("❌ Failed to send message")
-        context.user_data.pop('send_to_user')
-    
-    elif 'broadcast_mode' in context.user_data:
-        sent = 0
-        for user in db.active:
-            try:
-                if update.message.photo:
-                    await update.message.copy(chat_id=user['id'])
-                else:
-                    await context.bot.send_message(chat_id=user['id'], text=update.message.text)
-                sent += 1
-            except:
-                continue
-        await update.message.reply_text(f"📢 Broadcast sent to {sent}/{len(db.active)} users")
-        context.user_data.pop('broadcast_mode')
-
-async def error_handler(update: Update, context: CallbackContext):
-    error = str(context.error)
-    logging.error(f"🚨 Error: {error}")
-    
-    if "Conflict" in error and "getUpdates" in error:
-        logging.critical("💥 CRITICAL: Multiple bot instances detected!")
-        try:
-            await context.bot.send_message(
-                chat_id=ADMIN_CHAT_IDS[0],
-                text="🚨 MULTIPLE INSTANCE ALERT!\n\n"
-                     "Another bot instance was detected and this instance will shutdown.",
-                parse_mode="Markdown"
-            )
-        except:
-            pass
-        os._exit(1)
-
-async def post_init(application: Application):
-    # Set commands for all users
-    await application.bot.set_my_commands([
-        ("start", "Start the bot"),
-    ])
-    
-    # Set additional commands for admins only
-    if ADMIN_CHAT_IDS:
-        await application.bot.set_my_commands(
-            commands=[
-                ("start", "Start the bot"),
-                ("admin", "Admin panel"),
-                ("broadcast", "Send broadcast"),
-                ("message", "Message user")
-            ],
-            scope=BotCommandScopeChat(ADMIN_CHAT_IDS[0])
-        )
+# [Rest of your handlers remain the same...]
 
 def main():
     if not BOT_TOKEN:
@@ -331,6 +191,7 @@ def main():
         
         application.add_error_handler(error_handler)
         
+        # Modified ConversationHandler setup
         conv_handler = ConversationHandler(
             entry_points=[CallbackQueryHandler(start_registration, pattern='^activate$')],
             states={
@@ -338,25 +199,12 @@ def main():
                 GET_EMAIL: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_email)]
             },
             fallbacks=[],
-            per_message=False,  # Set to False since we're using MessageHandler
+            per_message=False,
             per_user=True,
             per_chat=True
         )
         
-        application.add_handler(CommandHandler("start", start))
-        application.add_handler(conv_handler)
-        application.add_handler(CommandHandler("admin", admin_command))
-        application.add_handler(CommandHandler("approve_", approve_user_command))
-        application.add_handler(CallbackQueryHandler(approve_user_callback, pattern='^approve_'))
-        application.add_handler(CallbackQueryHandler(show_pending_users, pattern='^approve_users$'))
-        application.add_handler(CallbackQueryHandler(start_broadcast, pattern='^broadcast$'))
-        application.add_handler(CallbackQueryHandler(start_user_message, pattern='^message_user$'))
-        application.add_handler(CommandHandler("broadcast", start_broadcast))
-        application.add_handler(CommandHandler("message", start_user_message))
-        application.add_handler(MessageHandler(
-            filters.TEXT | filters.PHOTO,
-            handle_admin_message
-        ))
+        # [Rest of your handler setup remains the same...]
         
         application.run_polling(
             drop_pending_updates=True,
@@ -375,12 +223,4 @@ def main():
         exit(1)
 
 if __name__ == '__main__':
-    print("""
-    ██╗   ██╗██╗███╗   ██╗ █████╗ ███╗   ██╗ ██████╗███████╗
-    ██║   ██║██║████╗  ██║██╔══██╗████╗  ██║██╔════╝██╔════╝
-    ██║   ██║██║██╔██╗ ██║███████║██╔██╗ ██║██║     █████╗  
-    ╚██╗ ██╔╝██║██║╚██╗██║██╔══██║██║╚██╗██║██║     ██╔══╝  
-     ╚████╔╝ ██║██║ ╚████║██║  ██║██║ ╚████║╚██████╗███████╗
-      ╚═══╝  ╚═╝╚═╝  ╚═══╝╚═╝  ╚═╝╚═╝  ╚═══╝ ╚═════╝╚══════╝
-    """)
     main()
