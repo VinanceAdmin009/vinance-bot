@@ -3,7 +3,7 @@ import logging
 import atexit
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
-    Updater, CommandHandler, CallbackContext,
+    Application, CommandHandler, CallbackContext,
     MessageHandler, ConversationHandler,
     CallbackQueryHandler,
     filters
@@ -18,7 +18,6 @@ except:
     logging.critical("🚨 Another bot instance is already running! Exiting...")
     exit(1)
 
-# Cleanup lock file on exit
 def cleanup():
     lock_file = f'/tmp/vinance-bot-prod.lock'
     if os.path.exists(lock_file):
@@ -68,11 +67,11 @@ def build_admin_menu():
     ])
 
 # ===== CORE FUNCTIONS =====
-def start(update: Update, context: CallbackContext):
+async def start(update: Update, context: CallbackContext):
     if update.message.chat.id in ADMIN_CHAT_IDS:
-        show_admin_panel(update)
+        await show_admin_panel(update)
     else:
-        update.message.reply_text(
+        await update.message.reply_text(
             WELCOME_MSG,
             reply_markup=InlineKeyboardMarkup([
                 [InlineKeyboardButton("🔓 Activate AI", callback_data="activate")]
@@ -80,33 +79,33 @@ def start(update: Update, context: CallbackContext):
             parse_mode="Markdown"
         )
 
-def show_admin_panel(update: Update):
+async def show_admin_panel(update: Update):
     stats = {
         "active_users": len(db.active),
         "pending_users": len(db.pending),
         "banned_users": 0
     }
-    update.message.reply_text(
+    await update.message.reply_text(
         ADMIN_DASHBOARD.format(**stats),
         reply_markup=build_admin_menu(),
         parse_mode="Markdown"
     )
 
-def start_registration(update: Update, context: CallbackContext):
+async def start_registration(update: Update, context: CallbackContext):
     query = update.callback_query
-    query.answer()
-    query.edit_message_text("📝 Please enter your Vinance username:")
+    await query.answer()
+    await query.edit_message_text("📝 Please enter your Vinance username:")
     return GET_USERNAME
 
-def get_username(update: Update, context: CallbackContext):
+async def get_username(update: Update, context: CallbackContext):
     context.user_data['username'] = update.message.text
-    update.message.reply_text("📧 Now enter your email address:")
+    await update.message.reply_text("📧 Now enter your email address:")
     return GET_EMAIL
 
-def get_email(update: Update, context: CallbackContext):
+async def get_email(update: Update, context: CallbackContext):
     email = update.message.text
     if not any(domain in email for domain in EMAIL_DOMAINS):
-        update.message.reply_text(f"❌ Invalid email domain. Allowed: {', '.join(EMAIL_DOMAINS)}")
+        await update.message.reply_text(f"❌ Invalid email domain. Allowed: {', '.join(EMAIL_DOMAINS)}")
         return GET_EMAIL
     
     user_data = {
@@ -118,7 +117,7 @@ def get_email(update: Update, context: CallbackContext):
     
     if db.add_user(user_data):
         for admin_id in ADMIN_CHAT_IDS:
-            context.bot.send_message(
+            await context.bot.send_message(
                 chat_id=admin_id,
                 text=f"🆕 *New Registration*\n\n"
                      f"• Name: {user_data['name']}\n"
@@ -128,64 +127,64 @@ def get_email(update: Update, context: CallbackContext):
                 parse_mode="Markdown"
             )
         
-        update.message.reply_text("✅ Registration complete! Admin will contact you soon.")
+        await update.message.reply_text("✅ Registration complete! Admin will contact you soon.")
     else:
-        update.message.reply_text("⚠️ You're already registered! Admin will contact you soon.")
+        await update.message.reply_text("⚠️ You're already registered! Admin will contact you soon.")
     
     return ConversationHandler.END
 
-def approve_user(update: Update, context: CallbackContext):
+async def approve_user(update: Update, context: CallbackContext):
     try:
         user_id = int(context.args[0])
         user = db.approve_user(user_id)
         
-        context.bot.send_message(
+        await context.bot.send_message(
             chat_id=user_id,
             text="🎉 *Your Vinance AI access has been approved!*\n\n"
                  "Start trading with /start",
             parse_mode="Markdown"
         )
-        update.message.reply_text(f"✅ Approved {user['name']}")
+        await update.message.reply_text(f"✅ Approved {user['name']}")
     except ValueError as e:
-        update.message.reply_text(f"❌ Error: {str(e)}")
+        await update.message.reply_text(f"❌ Error: {str(e)}")
     except:
-        update.message.reply_text("Usage: /approve_USERID")
+        await update.message.reply_text("Usage: /approve_USERID")
 
-def start_broadcast(update: Update, context: CallbackContext):
+async def start_broadcast(update: Update, context: CallbackContext):
     if update.message.chat.id not in ADMIN_CHAT_IDS:
         return
     
     context.user_data['broadcast_mode'] = True
-    update.message.reply_text("📢 Enter broadcast message (text or photo with caption):")
+    await update.message.reply_text("📢 Enter broadcast message (text or photo with caption):")
 
-def start_user_message(update: Update, context: CallbackContext):
+async def start_user_message(update: Update, context: CallbackContext):
     if update.message.chat.id not in ADMIN_CHAT_IDS:
         return
     
     context.user_data['user_message_mode'] = True
-    update.message.reply_text("📩 Enter user ID to message:")
+    await update.message.reply_text("📩 Enter user ID to message:")
 
-def handle_admin_message(update: Update, context: CallbackContext):
+async def handle_admin_message(update: Update, context: CallbackContext):
     if 'user_message_mode' in context.user_data:
         try:
             user_id = int(update.message.text)
             context.user_data['target_user'] = user_id
-            update.message.reply_text("✍️ Now enter your message:")
+            await update.message.reply_text("✍️ Now enter your message:")
             context.user_data.pop('user_message_mode')
             context.user_data['send_to_user'] = True
         except:
-            update.message.reply_text("❌ Invalid user ID")
+            await update.message.reply_text("❌ Invalid user ID")
     
     elif 'send_to_user' in context.user_data:
         user_id = context.user_data['target_user']
         try:
             if update.message.photo:
-                update.message.copy(chat_id=user_id)
+                await update.message.copy(chat_id=user_id)
             else:
-                context.bot.send_message(chat_id=user_id, text=update.message.text)
-            update.message.reply_text(f"✅ Message sent to user {user_id}")
+                await context.bot.send_message(chat_id=user_id, text=update.message.text)
+            await update.message.reply_text(f"✅ Message sent to user {user_id}")
         except:
-            update.message.reply_text("❌ Failed to send message")
+            await update.message.reply_text("❌ Failed to send message")
         context.user_data.pop('send_to_user')
     
     elif 'broadcast_mode' in context.user_data:
@@ -193,23 +192,23 @@ def handle_admin_message(update: Update, context: CallbackContext):
         for user in db.active:
             try:
                 if update.message.photo:
-                    update.message.copy(chat_id=user['id'])
+                    await update.message.copy(chat_id=user['id'])
                 else:
-                    context.bot.send_message(chat_id=user['id'], text=update.message.text)
+                    await context.bot.send_message(chat_id=user['id'], text=update.message.text)
                 sent += 1
             except:
                 continue
-        update.message.reply_text(f"📢 Broadcast sent to {sent}/{len(db.active)} users")
+        await update.message.reply_text(f"📢 Broadcast sent to {sent}/{len(db.active)} users")
         context.user_data.pop('broadcast_mode')
 
-def error_handler(update: Update, context: CallbackContext):
+async def error_handler(update: Update, context: CallbackContext):
     error = str(context.error)
     logging.error(f"🚨 Error: {error}")
     
     if "Conflict" in error and "getUpdates" in error:
         logging.critical("💥 CRITICAL: Multiple bot instances detected!")
         try:
-            context.bot.send_message(
+            await context.bot.send_message(
                 chat_id=ADMIN_CHAT_IDS[0],
                 text="🚨 MULTIPLE INSTANCE ALERT!\n\n"
                      "Another bot instance was detected and this instance will shutdown.",
@@ -219,24 +218,21 @@ def error_handler(update: Update, context: CallbackContext):
             pass
         os._exit(1)
 
+async def post_init(application: Application):
+    await application.bot.set_my_commands([
+        ("start", "Start the bot"),
+        ("admin", "Admin panel")
+    ])
+
 def main():
     if not BOT_TOKEN:
         logging.error("❌ Missing BOT_TOKEN in config.py!")
         return
 
     try:
-        updater = Updater(
-            BOT_TOKEN,
-            use_context=True,
-            request_kwargs={
-                'read_timeout': 30,
-                'connect_timeout': 30,
-                'pool_timeout': 30
-            }
-        )
-        dp = updater.dispatcher
+        application = Application.builder().token(BOT_TOKEN).post_init(post_init).build()
         
-        dp.add_error_handler(error_handler)
+        application.add_error_handler(error_handler)
         
         conv_handler = ConversationHandler(
             entry_points=[CallbackQueryHandler(start_registration, pattern='^activate$')],
@@ -247,19 +243,18 @@ def main():
             fallbacks=[]
         )
         
-        dp.add_handler(CommandHandler("start", start))
-        dp.add_handler(conv_handler)
-        dp.add_handler(CommandHandler("admin", show_admin_panel))
-        dp.add_handler(CommandHandler("approve_", approve_user))
-        dp.add_handler(CommandHandler("broadcast", start_broadcast))
-        dp.add_handler(CommandHandler("message", start_user_message))
-        dp.add_handler(MessageHandler(
+        application.add_handler(CommandHandler("start", start))
+        application.add_handler(conv_handler)
+        application.add_handler(CommandHandler("admin", show_admin_panel))
+        application.add_handler(CommandHandler("approve_", approve_user))
+        application.add_handler(CommandHandler("broadcast", start_broadcast))
+        application.add_handler(CommandHandler("message", start_user_message))
+        application.add_handler(MessageHandler(
             filters.TEXT | filters.PHOTO,
-            handle_admin_message,
-            pass_user_data=True
+            handle_admin_message
         ))
         
-        updater.start_polling(
+        application.run_polling(
             drop_pending_updates=True,
             poll_interval=1.0,
             timeout=30,
@@ -270,9 +265,6 @@ def main():
                 'my_chat_member'
             ]
         )
-        
-        logging.info("🌈 Bot started successfully!")
-        updater.idle()
         
     except Exception as e:
         logging.critical(f"💥 FATAL STARTUP ERROR: {str(e)}")
