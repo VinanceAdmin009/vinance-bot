@@ -240,7 +240,10 @@ def main():
                 GET_USERNAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_username)],
                 GET_EMAIL: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_email)]
             },
-            fallbacks=[]
+            fallbacks=[],
+            per_message=True,
+            per_user=True,
+            per_chat=True
         )
         
         application.add_handler(CommandHandler("start", start))
@@ -271,4 +274,12 @@ def main():
         exit(1)
 
 if __name__ == '__main__':
+    print("""
+    ██╗   ██╗██╗███╗   ██╗ █████╗ ███╗   ██╗ ██████╗███████╗
+    ██║   ██║██║████╗  ██║██╔══██╗████╗  ██║██╔════╝██╔════╝
+    ██║   ██║██║██╔██╗ ██║███████║██╔██╗ ██║██║     █████╗  
+    ╚██╗ ██╔╝██║██║╚██╗██║██╔══██║██║╚██╗██║██║     ██╔══╝  
+     ╚████╔╝ ██║██║ ╚████║██║  ██║██║ ╚████║╚██████╗███████╗
+      ╚═══╝  ╚═╝╚═╝  ╚═══╝╚═╝  ╚═╝╚═╝  ╚═══╝ ╚═════╝╚══════╝
+    """)
     main()
