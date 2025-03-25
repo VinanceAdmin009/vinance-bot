@@ -71,7 +71,7 @@ def build_approve_menu():
     for user in db.pending:
         keyboard.append([
             InlineKeyboardButton(
-                f"Approve {user['name']} ({user['id']})",
+                f"Approve {user['name']}",
                 callback_data=f"approve_{user['id']}"
             )
         ])
@@ -113,10 +113,9 @@ async def show_admin_panel(update: Update, context: CallbackContext):
         "pending_users": len(db.pending),
         "banned_users": 0
     }
-    await context.bot.send_photo(
+    await context.bot.send_message(
         chat_id=update.effective_chat.id,
-        photo=LOGO_URL,
-        caption=ADMIN_DASHBOARD.format(**stats),
+        text=ADMIN_DASHBOARD.format(**stats),
         reply_markup=build_admin_menu(),
         parse_mode="Markdown"
     )
@@ -124,14 +123,6 @@ async def show_admin_panel(update: Update, context: CallbackContext):
 async def start_registration(update: Update, context: CallbackContext):
     query = update.callback_query
     await query.answer()
-    
-    # Store the message info in context
-    context.user_data['original_message'] = {
-        'chat_id': query.message.chat_id,
-        'message_id': query.message.message_id
-    }
-    
-    # Send a new message instead of editing to avoid issues
     await context.bot.send_message(
         chat_id=query.message.chat_id,
         text="📝 Please enter your Vinance username:"
@@ -158,16 +149,15 @@ async def get_email(update: Update, context: CallbackContext):
     
     if db.add_user(user_data):
         for admin_id in ADMIN_CHAT_IDS:
-            await context.bot.send_photo(
+            # Send plain text message without Markdown formatting issues
+            await context.bot.send_message(
                 chat_id=admin_id,
-                photo=LOGO_URL,
-                caption=f"🆕 *New Registration*\n\n"
+                text=f"🆕 New Registration\n\n"
                      f"• Name: {user_data['name']}\n"
-                     f"• Username: @{user_data['username']}\n"
+                     f"• Username: {user_data['username']}\n"
                      f"• Email: {user_data['email']}\n"
-                     f"• User ID: `{user_data['id']}`\n\n"
+                     f"• User ID: {user_data['id']}\n\n"
                      f"Approve with: /approve_{user_data['id']}",
-                parse_mode="Markdown",
                 reply_markup=InlineKeyboardMarkup([
                     [InlineKeyboardButton("✅ Approve", callback_data=f"approve_{user_data['id']}")]
                 ])
@@ -185,12 +175,10 @@ async def approve_user_command(update: Update, context: CallbackContext):
         user_id = int(context.args[0])
         user = db.approve_user(user_id)
         
-        await context.bot.send_photo(
+        await context.bot.send_message(
             chat_id=user_id,
-            photo=LOGO_URL,
-            caption="🎉 *Your Vinance AI access has been approved!*\n\n"
-                 "Start trading with /start",
-            parse_mode="Markdown"
+            text="🎉 Your Vinance AI access has been approved!\n\n"
+                 "Start trading with /start"
         )
         await update.message.reply_text(f"✅ Approved {user['name']}")
     except ValueError as e:
@@ -206,16 +194,14 @@ async def approve_user_callback(update: Update, context: CallbackContext):
         await query.edit_message_text("❌ Admin access required!")
         return
     
-    user_id = int(query.data.split('_')[1])
     try:
+        user_id = int(query.data.split('_')[1])
         user = db.approve_user(user_id)
         
-        await context.bot.send_photo(
+        await context.bot.send_message(
             chat_id=user_id,
-            photo=LOGO_URL,
-            caption="🎉 *Your Vinance AI access has been approved!*\n\n"
-                 "Start trading with /start",
-            parse_mode="Markdown"
+            text="🎉 Your Vinance AI access has been approved!\n\n"
+                 "Start trading with /start"
         )
         await query.edit_message_text(f"✅ Approved {user['name']}")
     except Exception as e:
